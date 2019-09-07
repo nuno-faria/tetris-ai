@@ -4,7 +4,7 @@ A bot that plays [tetris](https://en.wikipedia.org/wiki/Tetris) using deep reinf
 
 ## Demo
 
-First 10000 points, after training.
+First 10000 points, after some training.
 
 ![Demo - First 10000 points](./demo.gif)
 
