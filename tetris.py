@@ -161,17 +161,13 @@ class Tetris:
     def _clear_lines(self, board):
         '''Clears completed lines in a board'''
         # Check if lines can be cleared
-        lines_cleared = 0
-        for index, row in enumerate(board):
-            if sum(row) == Tetris.BOARD_WIDTH:
-                lines_cleared += 1
-                del board[index]
-
-        # Add new lines at the top
-        for _ in range(lines_cleared):
-            board.insert(0, [0 for _ in range(Tetris.BOARD_WIDTH)])
-
-        return lines_cleared, board
+        lines_to_clear = [index for index, row in enumerate(board) if sum(row) == Tetris.BOARD_WIDTH]
+        if lines_to_clear:
+            board = [row for index, row in enumerate(board) if index not in lines_to_clear]
+            # Add new lines at the top
+            for _ in lines_to_clear:
+                board.insert(0, [0 for _ in range(Tetris.BOARD_WIDTH)])
+        return len(lines_to_clear), board
 
 
     def _number_of_holes(self, board):
