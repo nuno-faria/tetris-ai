@@ -1,8 +1,16 @@
-from keras.models import Sequential, save_model, load_model
-from keras.layers import Dense
+
+import os
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"   # see issue #152
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
+from keras.models import Sequential, load_model, Model
+# from keras.layers import Dense
+from keras import layers, optimizers
 from collections import deque
 import numpy as np
 import random
+import pickle
+from statistics import median
 
 # Deep Q Learning Agent + Maximin
 #
@@ -23,30 +31,29 @@ class DQNAgent:
         epsilon (float): Exploration (probability of random values given) value at the start
         epsilon_min (float): At what epsilon value the agent stops decrementing it
         epsilon_stop_episode (int): At what episode the agent stops decreasing the exploration variable
-        n_neurons (list(int)): List with the number of neurons in each inner layer
-        activations (list): List with the activations used in each inner layer, as well as the output
         loss (obj): Loss function
         optimizer (obj): Otimizer used
         replay_start_size: Minimum size needed to train
     '''
 
     def __init__(self, state_size, mem_size=10000, discount=0.95,
-                 epsilon=1, epsilon_min=0, epsilon_stop_episode=500,
-                 n_neurons=[32,32], activations=['relu', 'relu', 'linear'],
+                 epsilon=0.1, epsilon_min=0.1, epsilon_stop_episode=1000,
+                 nb_channels_small_filter=6, nb_channels_big_filter=8, nb_dense_neurons=[12,4,4],
                  loss='mse', optimizer='adam', replay_start_size=None):
-
-        assert len(activations) == len(n_neurons) + 1
-
         self.state_size = state_size
         self.memory = deque(maxlen=mem_size)
         self.discount = discount
         self.epsilon = epsilon
         self.epsilon_min = epsilon_min
         self.epsilon_decay = (self.epsilon - self.epsilon_min) / (epsilon_stop_episode)
-        self.n_neurons = n_neurons
-        self.activations = activations
+        self.nb_channels_small_filter = nb_channels_small_filter
+        self.nb_channels_big_filter   = nb_channels_big_filter
+        self.nb_dense_neurons         = nb_dense_neurons
         self.loss = loss
-        self.optimizer = optimizer
+        # self.optimizer = optimizer
+        optim_params  = optimizer.split('-')
+        self.adam_lr  = 10**-int(optim_params[-2]) if len(optim_params)>2 else 0.001
+        self.adam_eps = 10**-int(optim_params[-1]) if len(optim_params)>2 else 1e-7
         if not replay_start_size:
             replay_start_size = mem_size / 2
         self.replay_start_size = replay_start_size
@@ -55,15 +62,36 @@ class DQNAgent:
 
     def _build_model(self):
         '''Builds a Keras deep neural network model'''
-        model = Sequential()
-        model.add(Dense(self.n_neurons[0], input_dim=self.state_size, activation=self.activations[0]))
+        input_board  = layers.Input(shape=(6, 6, 1))
+        all_nn_after_conv2d = []
+        for kernel_size, nb_chan in [ (x, self.nb_channels_small_filter) for x in [(1,2), (2,1)] ]:
+            pool_size = (1,5) if kernel_size[0]<kernel_size[1] else (5,1)
+            nn10 = layers.ReLU()(input_board)
+            nn20 = layers.Conv2D(nb_chan, kernel_size, activation='relu')(nn10)
+            nn30 = layers.AveragePooling2D(pool_size=pool_size)(nn20)
+            nn40 = layers.GlobalMaxPool2D()(nn30)
+            all_nn_after_conv2d.append(nn40)
+        small_filter_nn = layers.Dense(self.nb_dense_neurons[0], activation='relu')(layers.concatenate(all_nn_after_conv2d))
+        all_nn_after_conv2d = []
+        for kernel_size, nb_chan in [ (x, self.nb_channels_big_filter) for x in [(2,3), (3,2), (3,3)] ]:
+            nn15 = layers.ReLU()(input_board)
+            nn25 = layers.Conv2D(nb_chan, kernel_size, activation='relu')(nn15)
+            nn35 = layers.GlobalAveragePooling2D()(nn25)
+            all_nn_after_conv2d.append(nn35)
+        big_filter_nn = layers.Dense(self.nb_dense_neurons[1], activation='relu')(layers.concatenate(all_nn_after_conv2d))
 
-        for i in range(1, len(self.n_neurons)):
-            model.add(Dense(self.n_neurons[i], activation=self.activations[i]))
-
-        model.add(Dense(1, activation=self.activations[-1]))
-
-        model.compile(loss=self.loss, optimizer=self.optimizer)
+        input_scalarA  = layers.Input(shape=(1, ))
+        input_scalarB  = layers.Input(shape=(1, ))
+        new_dense = layers.concatenate([small_filter_nn, big_filter_nn, input_scalarA, input_scalarB])
+        # new_dense = layers.concatenate([small_filter_nn, big_filter_nn])
+        for dense in self.nb_dense_neurons[2:]:
+            previous_dense = new_dense
+            new_dense = layers.Dense(dense)(previous_dense)
+        end_nn = layers.Dense(1)(new_dense)
+        model = Model(inputs=[input_scalarA, input_scalarB, input_board], outputs=end_nn)
+        # model = Model(inputs=input_board, outputs=end_nn)
+        model.compile(loss=self.loss, optimizer=optimizers.Adam(learning_rate=self.adam_lr, epsilon=self.adam_eps))
+        model.summary()
         
         return model
 
@@ -92,53 +120,61 @@ class DQNAgent:
             return self.predict_value(state)
 
 
-    def best_state(self, states):
-        '''Returns the best state for a given collection of states'''
+    def find_best_state(self, states, allow_random=True):
+        '''Returns the best state/action for a given dict of states/action'''
+        if len(states) == 0:
+            return None, None
         max_value = None
-        best_state = None
+        best_action, best_state = None, None
 
-        if random.random() <= self.epsilon:
-            return random.choice(list(states))
+        if allow_random and random.random() <= self.epsilon:
+            return random.choice(list(states.items()))
 
-        else:
-            for state in states:
-                value = self.predict_value(np.reshape(state, [1, self.state_size]))
-                if not max_value or value > max_value:
-                    max_value = value
-                    best_state = state
+        all_actions_states = list(states.items())
+        all_states = [ [s[1][i] for s in all_actions_states] for i in range(3) ]
 
-        return best_state
+        all_values = self.model.predict(all_states, workers=6, use_multiprocessing=True)
+        best_i = np.argmax(all_values)
+        best_action, best_state = all_actions_states[best_i]
+        return best_action, best_state            
 
 
-    def train(self, batch_size=32, epochs=3):
+    def train(self, batch_size=32, epochs=3, force_fail=10):
         '''Trains the agent'''
         n = len(self.memory)
     
         if n >= self.replay_start_size and n >= batch_size:
 
-            batch = random.sample(self.memory, batch_size)
+            memory_fail = [ x for x in self.memory if x[3] ]
+            # memory_fail = memory_fail[-batch_size:] # taking recent failures
+            batch1 = random.sample(memory_fail, min(batch_size*force_fail//100, len(memory_fail)))
+            batch2 = random.sample(self.memory, batch_size-len(batch1))
+            batch = batch2 + batch1
 
             # Get the expected score for the next states, in batch (better performance)
-            next_states = np.array([x[1] for x in batch])
-            next_qs = [x[0] for x in self.model.predict(next_states)]
+            next_states = [ [s[1][i] for s in batch] for i in range(3) ]
+            next_qs = self.model.predict(next_states, workers=6, use_multiprocessing=True)
 
-            x = []
+            cur_states  = [ [s[0][i] for s in batch] for i in range(3) ]
             y = []
-
             # Build xy structure to fit the model in batch (better performance)
-            for i, (state, _, reward, done) in enumerate(batch):
-                if not done:
-                    # Partial Q formula
-                    new_q = reward + self.discount * next_qs[i]
-                else:
-                    new_q = reward
-
-                x.append(state)
+            for i, (_, _, reward, done) in enumerate(batch):
+                # Partial Q formula
+                new_q = reward + ((self.discount * next_qs[i]) if not done else 0)
                 y.append(new_q)
-
             # Fit the model to the given values
-            self.model.fit(np.array(x), np.array(y), batch_size=batch_size, epochs=epochs, verbose=0)
-
+            history = self.model.fit(cur_states, np.array(y), batch_size=batch_size, epochs=epochs, verbose=0, workers=6, use_multiprocessing=True)
+            # Evalute model on failing states
+            fail_qs = self.model.predict([next_states[i][-len(batch1):] for i in range(3)], workers=6, use_multiprocessing=True)[0]
+            # print('Failure results: ', max(fail_qs), median(fail_qs), fail_qs)
             # Update the exploration variable
             if self.epsilon > self.epsilon_min:
                 self.epsilon -= self.epsilon_decay
+            return (history.history['loss'][-1], median(fail_qs))
+        return (None, None)
+
+
+    def save(self, filename):
+        self.model.save(filename + '.h5')
+        with open(filename + '.pickle', 'wb') as f:
+            pickle.dump(self, f, pickle.HIGHEST_PROTOCOL)
