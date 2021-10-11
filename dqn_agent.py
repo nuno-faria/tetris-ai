@@ -80,7 +80,7 @@ class DQNAgent:
 
     def predict_value(self, state):
         '''Predicts the score for a certain state'''
-        return self.model.predict(state)[0]
+        return self.model().predict(state)[0]
 
 
     def act(self, state):
@@ -120,7 +120,7 @@ class DQNAgent:
 
             # Get the expected score for the next states, in batch (better performance)
             next_states = np.array([x[1] for x in batch])
-            next_qs = [x[0] for x in self.model.predict(next_states)]
+            next_qs = [x[0] for x in self.model().predict(next_states)]
 
             x = []
             y = []
@@ -137,7 +137,7 @@ class DQNAgent:
                 y.append(new_q)
 
             # Fit the model to the given values
-            self.model.fit(np.array(x), np.array(y), batch_size=batch_size, epochs=epochs, verbose=0)
+            self.model().fit(np.array(x), np.array(y), batch_size=batch_size, epochs=epochs, verbose=0)
 
             # Update the exploration variable
             if self.epsilon > self.epsilon_min:
