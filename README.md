@@ -70,13 +70,29 @@ For the training, the replay queue had size 20000, with a random sample of 512 s
 
 #### Requirements
 
-- Tensorflow (`tensorflow-gpu==1.14.0`, CPU version can be used too)
-- Tensorboard (`tensorboard==1.14.0`)
-- Keras (`Keras==2.2.4`)
-- Opencv-python (`opencv-python==4.1.0.25`)
-- Numpy (`numpy==1.16.4`)
-- Pillow (`Pillow==5.4.1`)
-- Tqdm (`tqdm==4.31.1`)
+- Tensorflow/Jax/PyTorch
+- Tensorboard
+- Keras
+- Opencv-python
+- Numpy
+- Pillow
+- Tqdm
+
+The original tests were evaluated using Keras with Tensorflow as the backend. However, using Jax as the backend appears to result faster training/predict operations.
+
+## Run
+
+- Train/execute:
+```shell
+# hyper parameters can be changed in the run.py script
+python3 run.py
+```
+
+- View logs with `tensorboard`:
+```shell
+tensorboard --logdir ./logs
+```
+
 
 ## Results
 

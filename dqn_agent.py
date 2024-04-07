@@ -80,7 +80,7 @@ class DQNAgent:
 
     def predict_value(self, state):
         '''Predicts the score for a certain state'''
-        return self.model.predict(state)[0]
+        return self.model.predict(state, verbose=0)[0]
 
 
     def act(self, state):
