@@ -1,41 +1,21 @@
-from keras.models import Sequential, save_model, load_model
-from keras.layers import Dense
-from collections import deque
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, Dataset
+from collections import deque, OrderedDict
 import numpy as np
 import random
 
-# Deep Q Learning Agent + Maximin
-#
-# This version only provides only value per input,
-# that indicates the score expected in that state.
-# This is because the algorithm will try to find the
-# best final state for the combinations of possible states,
-# in constrast to the traditional way of finding the best
-# action for a particular state.
+torch.autograd.set_detect_anomaly(True)
+
 class DQNAgent:
-
-    '''Deep Q Learning Agent + Maximin
-
-    Args:
-        state_size (int): Size of the input domain
-        mem_size (int): Size of the replay buffer
-        discount (float): How important is the future rewards compared to the immediate ones [0,1]
-        epsilon (float): Exploration (probability of random values given) value at the start
-        epsilon_min (float): At what epsilon value the agent stops decrementing it
-        epsilon_stop_episode (int): At what episode the agent stops decreasing the exploration variable
-        n_neurons (list(int)): List with the number of neurons in each inner layer
-        activations (list): List with the activations used in each inner layer, as well as the output
-        loss (obj): Loss function
-        optimizer (obj): Otimizer used
-        replay_start_size: Minimum size needed to train
-    '''
-
     def __init__(self, state_size, mem_size=10000, discount=0.95,
                  epsilon=1, epsilon_min=0, epsilon_stop_episode=500,
-                 n_neurons=[32,32], activations=['relu', 'relu', 'linear'],
+                 n_neurons=[100,100,100], activations=['relu', 'relu', 'linear'],
                  loss='mse', optimizer='adam', replay_start_size=None):
 
         assert len(activations) == len(n_neurons) + 1
+        activationsDict = {"relu": nn.ReLU, "sigmoid": nn.Sigmoid, "tanh": nn.Tanh, "linear": nn.Identity}
 
         self.state_size = state_size
         self.memory = deque(maxlen=mem_size)
@@ -44,44 +24,44 @@ class DQNAgent:
         self.epsilon_min = epsilon_min
         self.epsilon_decay = (self.epsilon - self.epsilon_min) / (epsilon_stop_episode)
         self.n_neurons = n_neurons
-        self.activations = activations
+        self.activations = [activationsDict[x] for x in activations]
         self.loss = loss
         self.optimizer = optimizer
         if not replay_start_size:
             replay_start_size = mem_size / 2
         self.replay_start_size = replay_start_size
-        self.model = self._build_model()
-
+        self.model, self.loss, self.optimizer = self._build_model()
 
     def _build_model(self):
-        '''Builds a Keras deep neural network model'''
-        model = Sequential()
-        model.add(Dense(self.n_neurons[0], input_dim=self.state_size, activation=self.activations[0]))
+        model = nn.Module()
+        layers = []
+        n_nodes = [self.state_size] + self.n_neurons + [1]
 
-        for i in range(1, len(self.n_neurons)):
-            model.add(Dense(self.n_neurons[i], activation=self.activations[i]))
+        assert len(n_nodes) == len(self.activations) + 1
 
-        model.add(Dense(1, activation=self.activations[-1]))
+        for layer_cnt in range(len(self.activations)):
+            layers.append((f"fc{layer_cnt}", nn.Linear(n_nodes[layer_cnt], n_nodes[layer_cnt + 1])))
+            if self.activations[layer_cnt] == "relu":
+                layers.append((f"act{layer_cnt}", nn.ReLU()))
 
-        model.compile(loss=self.loss, optimizer=self.optimizer)
-        
-        return model
+        model = nn.Sequential(OrderedDict(layers))
+        criterion = nn.MSELoss()
+        optimizer = optim.Adam(model.parameters())
 
+        return model, criterion, optimizer
 
     def add_to_memory(self, current_state, next_state, reward, done):
         '''Adds a play to the replay memory buffer'''
         self.memory.append((current_state, next_state, reward, done))
 
-
     def random_value(self):
         '''Random score for a certain action'''
         return random.random()
 
-
     def predict_value(self, state):
         '''Predicts the score for a certain state'''
-        return self.model.predict(state, verbose=0)[0]
-
+        state = torch.tensor(state, dtype=torch.float32)
+        return self.model(state).item()
 
     def act(self, state):
         '''Returns the expected score of a certain state'''
@@ -90,7 +70,6 @@ class DQNAgent:
             return self.random_value()
         else:
             return self.predict_value(state)
-
 
     def best_state(self, states):
         '''Returns the best state for a given collection of states'''
@@ -109,18 +88,17 @@ class DQNAgent:
 
         return best_state
 
-
     def train(self, batch_size=32, epochs=3):
         '''Trains the agent'''
         n = len(self.memory)
-    
+
         if n >= self.replay_start_size and n >= batch_size:
 
             batch = random.sample(self.memory, batch_size)
 
             # Get the expected score for the next states, in batch (better performance)
-            next_states = np.array([x[1] for x in batch])
-            next_qs = [x[0] for x in self.model.predict(next_states)]
+            next_states = torch.tensor([x[1] for x in batch], dtype=torch.float)
+            next_qs = [x[0] for x in self.model.forward(next_states)]
 
             x = []
             y = []
@@ -135,10 +113,34 @@ class DQNAgent:
 
                 x.append(state)
                 y.append(new_q)
+            
+            x = torch.tensor(x, dtype=torch.float)
+            y = torch.tensor(y, dtype=torch.float)
 
             # Fit the model to the given values
-            self.model.fit(np.array(x), np.array(y), batch_size=batch_size, epochs=epochs, verbose=0)
+            dataset = StateScoreDataset(x, y.reshape(-1, 1))
+            dataloader = DataLoader(dataset=dataset, batch_size=batch_size)
+            for _ in range(epochs):
+                for data, label in dataloader:
+                    self.optimizer.zero_grad()
+                    loss = self.loss(self.model.forward(x), label)
+                    loss.backward()
+                    self.optimizer.step()
 
             # Update the exploration variable
             if self.epsilon > self.epsilon_min:
                 self.epsilon -= self.epsilon_decay
+
+
+class StateScoreDataset(Dataset):
+    def __init__(self, data, labels):
+        self.data = data
+        self.labels = labels
+
+        assert len(self.data) == len(self.labels)
+
+    def __getitem__(self, idx):
+        return self.data[idx], self.labels[idx]
+
+    def __len__(self):
+        return len(self.data)
