@@ -5,3 +5,4 @@ opencv-python
 numpy
 Pillow
 tqdm
+torch
