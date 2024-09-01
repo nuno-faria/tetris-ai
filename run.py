@@ -1,8 +1,7 @@
 from dqn_agent import DQNAgent
 from tetris import Tetris
 from datetime import datetime
-from statistics import mean, median
-import random
+from statistics import mean
 from logs import CustomTensorBoard
 from tqdm import tqdm
         
@@ -10,20 +9,21 @@ from tqdm import tqdm
 # Run dqn with Tetris
 def dqn():
     env = Tetris()
-    episodes = 2000
-    max_steps = None
-    epsilon_stop_episode = 1500
-    mem_size = 20000
-    discount = 0.95
-    batch_size = 512
-    epochs = 1
-    render_every = 50
-    log_every = 50
-    replay_start_size = 2000
-    train_every = 1
-    n_neurons = [32, 32]
-    render_delay = None
-    activations = ['relu', 'relu', 'linear']
+    episodes = 3000 # total number of episodes
+    max_steps = None # max number of steps per game (None for infinite)
+    epsilon_stop_episode = 2000 # at what episode the random exploration stops
+    mem_size = 1000 # maximum number of steps stored by the agent
+    discount = 0.95 # discount in the Q-learning formula (see DQNAgent)
+    batch_size = 128 # number of actions to consider in each training
+    epochs = 1 # number of epochs per training
+    render_every = 50 # renders the gameplay every x episodes
+    render_delay = None # delay added to render each frame (None for no delay)
+    log_every = 50 # logs the current stats every x episodes
+    replay_start_size = 1000 # minimum steps stored in the agent required to start training
+    train_every = 1 # train every x episodes
+    n_neurons = [32, 32, 32] # number of neurons for each activation layer
+    activations = ['relu', 'relu', 'relu', 'linear'] # activation layers
+    save_best_model = True # saves the best model so far at "best.keras"
 
     agent = DQNAgent(env.get_state_size(),
                      n_neurons=n_neurons, activations=activations,
@@ -34,6 +34,7 @@ def dqn():
     log = CustomTensorBoard(log_dir=log_dir)
 
     scores = []
+    best_score = 0
 
     for episode in tqdm(range(episodes)):
         current_state = env.reset()
@@ -47,20 +48,16 @@ def dqn():
 
         # Game
         while not done and (not max_steps or steps < max_steps):
-            next_states = env.get_next_states()
-            best_state = agent.best_state(next_states.values())
-            
-            best_action = None
-            for action, state in next_states.items():
-                if state == best_state:
-                    best_action = action
-                    break
+            # state -> action
+            next_states = {tuple(v):k for k, v in env.get_next_states().items()}
+            best_state = agent.best_state(next_states.keys())
+            best_action = next_states[best_state]
 
             reward, done = env.play(best_action[0], best_action[1], render=render,
                                     render_delay=render_delay)
             
-            agent.add_to_memory(current_state, next_states[best_action], reward, done)
-            current_state = next_states[best_action]
+            agent.add_to_memory(current_state, best_state, reward, done)
+            current_state = best_state
             steps += 1
 
         scores.append(env.get_game_score())
@@ -77,6 +74,12 @@ def dqn():
 
             log.log(episode, avg_score=avg_score, min_score=min_score,
                     max_score=max_score)
+
+        # Save model
+        if save_best_model and env.get_game_score() > best_score:
+            print(f'Saving a new best model (score={env.get_game_score()}, episode={episode})')
+            best_score = env.get_game_score()
+            agent.save_model("best.keras")
 
 
 if __name__ == "__main__":

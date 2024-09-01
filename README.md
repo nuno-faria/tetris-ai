@@ -1,12 +1,43 @@
 # tetris-ai
 
-A bot that plays [tetris](https://en.wikipedia.org/wiki/Tetris) using deep reinforcement learning.
+A bot that plays [Tetris](https://en.wikipedia.org/wiki/Tetris) using deep reinforcement learning.
 
 ## Demo
 
 First 10000 points, after some training.
 
 ![Demo - First 10000 points](./demo.gif)
+
+
+## Requirements
+
+- Tensorflow/Jax/PyTorch
+- Tensorboard
+- Keras
+- Opencv-python
+- Numpy
+- Pillow
+- Tqdm
+
+The original tests were evaluated using Keras with Tensorflow as the backend. However, new tests (`keras==3.5.0`) using Jax (`jax[cuda12]`) as the backend appear to result in faster training/predict operations (e.g., `KERAS_BACKEND="jax" python3 run.py`).
+
+## Run
+
+- Train/execute:
+```shell
+# hyper parameters can be changed in the run.py script
+python3 run.py
+```
+
+- View logs with `tensorboard`:
+```shell
+tensorboard --logdir ./logs
+```
+
+- Play a game with an existing model (`sample.keras` is a previously trained model that achieved more than 800k points, using 3 Relu layers with 32 neurons each):
+```shell
+python3 run_model.py sample.keras
+```
 
 
 ## How does it work
@@ -52,46 +83,21 @@ It was considered several attributes to train the network. Since there were many
 
 #### Game Score
 
-Each block placed yields 1 point. When clearing lines, the given score is *number_lines_cleared*^2 × *board_width*. Losing a game subtracts 1 point.
+Each block placed yields 1 point. When clearing lines, the given score is $number\_lines\_cleared^2 \times board\_width$. Losing a game subtracts 1 point.
 
 
 ## Implementation
 
-All the code was implemented using `Python`. For the neural network, it was used the framework `Keras` with `Tensorflow` as backend.
+The code was implemented using `Python`. For the neural network, it was used the framework `Keras`.
 
 #### Internal Structure
 
-The agent is formed by a deep neural network, with variable number of layers, neurons per layer, activation functions, loss function, optimizer, etc. By default, it was chosen a neural network with 2 hidden layers (32 neurons each); the activations `ReLu` for the inner layers and the `Linear` for the last one; `Mean Squared Error` as the loss function; `Adam` as the optimizer; `Epsilon` (exploration) starting at 1 and ending at 0, when the number of episodes reaches 75%; `Discount` at 0.95 (significance given to the future rewards, instead of the immediate ones).
+The agent is formed by a deep neural network, with variable number of layers, neurons per layer, activation functions, loss function, optimizer, etc. It was chosen a neural network with 2 hidden layers (32 neurons each); the activations `ReLu` for the inner layers and the `Linear` for the last one; `Mean Squared Error` as the loss function; `Adam` as the optimizer; `Epsilon` (exploration) starting at 1 and ending at 0, when the number of episodes reaches 75%; `Discount` at 0.95 (significance given to the future rewards, instead of the immediate ones).
 
 #### Training
 
 For the training, the replay queue had size 20000, with a random sample of 512 selected for training each episode, using 1 epoch.
 
-
-#### Requirements
-
-- Tensorflow/Jax/PyTorch
-- Tensorboard
-- Keras
-- Opencv-python
-- Numpy
-- Pillow
-- Tqdm
-
-The original tests were evaluated using Keras with Tensorflow as the backend. However, using Jax as the backend appears to result faster training/predict operations.
-
-## Run
-
-- Train/execute:
-```shell
-# hyper parameters can be changed in the run.py script
-python3 run.py
-```
-
-- View logs with `tensorboard`:
-```shell
-tensorboard --logdir ./logs
-```
 
 
 ## Results
