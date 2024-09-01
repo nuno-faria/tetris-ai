@@ -35,9 +35,18 @@ class DQNAgent:
                  n_neurons=[32,32], activations=['relu', 'relu', 'linear'],
                  loss='mse', optimizer='adam', replay_start_size=None):
 
-        assert len(activations) == len(n_neurons) + 1
+        if len(activations) != len(n_neurons) + 1:
+            raise ValueError("n_neurons and activations do not match, "
+                             f"expected a n_neurons list of length {len(activations) - 1}")
+
+        if replay_start_size is not None and replay_start_size > mem_size:
+            raise ValueError("replay_start_size must be <= mem_size")
+
+        if mem_size <= 0:
+            raise ValueError("mem_size must be > 0")
 
         self.state_size = state_size
+        self.mem_size = mem_size
         self.memory = deque(maxlen=mem_size)
         self.discount = discount
         self.epsilon = epsilon
@@ -112,6 +121,9 @@ class DQNAgent:
 
     def train(self, batch_size=32, epochs=3):
         '''Trains the agent'''
+        if batch_size > self.mem_size:
+            print('WARNING: batch size is bigger than mem_size. The agent will not be trained.')
+
         n = len(self.memory)
     
         if n >= self.replay_start_size and n >= batch_size:
